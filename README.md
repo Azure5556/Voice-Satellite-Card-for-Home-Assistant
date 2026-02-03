@@ -7,6 +7,8 @@ Transform any browser into a voice-activated satellite for Home Assistant's Assi
 
 ![Screenshot](https://github.com/user-attachments/assets/2deb9d20-2321-4a38-876b-802b2eae1cd2)
 
+https://github.com/user-attachments/assets/50f51ebc-be70-4ea2-a1b5-8d80446f55c2
+
 ## Why This Card?
 
 Home Assistant's built-in voice features require dedicated hardware like ESPHome devices or specific voice assistant hardware. But what if you already have a tablet mounted on your wall running the Home Assistant dashboard?
