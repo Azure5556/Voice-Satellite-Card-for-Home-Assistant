@@ -102,17 +102,32 @@ auto_gain_control: true            # Enable automatic gain control
 
 # Appearance - Bar
 bar_position: bottom               # 'bottom' or 'top'
-bar_height: 4                      # Height in pixels (2-20)
+bar_height: 16                     # Height in pixels (2-40)
 bar_gradient: '#FF7777, #FF9977, #FFCC77, #CCFF77, #77FFAA, #77DDFF, #77AAFF, #AA77FF, #FF77CC'
 
-# Appearance - Transcription Bubble
+# Appearance - Transcription Bubble (User Speech)
 show_transcription: true           # Show/hide the transcription bubble
-transcription_font_size: 30        # Font size in pixels
+transcription_font_size: 20        # Font size in pixels
 transcription_font_family: inherit # CSS font family
 transcription_font_color: '#444444'
-transcription_background: 'rgba(255, 255, 255, 0.85)'
+transcription_font_bold: true      # Bold text
+transcription_font_italic: false   # Italic text
+transcription_background: '#ffffff'
+transcription_border_color: 'rgba(0, 180, 255, 0.5)'
 transcription_padding: 16          # Padding in pixels
 transcription_rounded: true        # Rounded corners
+
+# Appearance - Response Bubble (Assistant Speech)
+show_response: true                # Show/hide the response bubble
+response_font_size: 20             # Font size in pixels
+response_font_family: inherit      # CSS font family
+response_font_color: '#444444'
+response_font_bold: true           # Bold text
+response_font_italic: false        # Italic text
+response_background: '#ffffff'
+response_border_color: 'rgba(100, 200, 150, 0.5)'
+response_padding: 16               # Padding in pixels
+response_rounded: true             # Rounded corners
 ```
 
 ### Visual Editor
