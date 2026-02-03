@@ -13,12 +13,12 @@ Home Assistant's built-in voice features require dedicated hardware like ESPHome
 
 **Voice Satellite Card** solves this by:
 
-- **Using your browser's microphone** - No additional hardware needed
-- **Supporting wake words** - Say "OK Nabu" or your custom wake word to activate
-- **Playing TTS responses** - Hear responses directly from your device
-- **Working on any device** - Tablets, phones, computers, kiosks
-- **Providing visual feedback** - Gradient bar shows current state
-- **Showing transcriptions** - See what was understood on screen
+- **Using your browser's microphone** - No additional hardware needed.
+- **Supporting wake words** - Say "OK Nabu" or your custom wake word to activate.
+- **Playing TTS responses** - Hear responses directly from your device.
+- **Working on any device** - Tablets, phones, computers, kiosks.
+- **Providing visual feedback** - Gradient bar shows current state.
+- **Showing transcriptions** - See what was understood on screen.
 
 Perfect for wall-mounted tablets, kiosk displays, or any browser-based Home Assistant setup.
 
@@ -26,43 +26,42 @@ Perfect for wall-mounted tablets, kiosk displays, or any browser-based Home Assi
 
 **Warning:** This card requires microphone access and works best when:
 
-1. **The browser has microphone permissions granted** - You will be prompted on first use
-2. **The page is served over HTTPS** - Required for microphone access in modern browsers
+1. **The browser has microphone permissions granted** - You will be prompted on first use.
+2. **The page is served over HTTPS** - Required for microphone access in modern browsers.
 3. **The screen stays on** - If the device screen turns off completely, the microphone will stop working. Use a screensaver instead of screen-off to keep the mic active.
 
 For kiosk setups like Fully Kiosk Browser, make sure to enable microphone permissions and use the screensaver feature (not screen off) to keep the microphone active while dimming the display.
 
 ## Features
 
-- **Wake Word Detection** - Uses Home Assistant's openWakeWord add-on for server-side processing
-- **Works Across Views** - Pipeline stays active when switching dashboard views
-- **Auto-Start** - Automatically begins listening on page load (with fallback button)
-- **Visual Feedback** - Customizable rainbow gradient bar shows listening/processing/speaking states
-- **Transcription Display** - Shows what was understood in a styled bubble
-- **Screensaver Control** - Optionally turn off Fully Kiosk screensaver when wake word is detected
-- **Configurable Chimes** - Audio feedback for wake word detection and request completion
+- **Wake Word Detection** - Uses Home Assistant's already configured wake word detection (like wyoming openWakeWord) for server-side processing.
+- **Works Across Views** - Pipeline stays active when switching dashboard views.
+- **Auto-Start** - Automatically begins listening on page load (with fallback button).
+- **Visual Feedback** - Customizable rainbow gradient bar shows listening/processing/speaking states.
+- **Transcription Display** - Shows what was understood in a styled bubble.
+- **Screensaver Control** - Optionally turn off Fully Kiosk screensaver when wake word is detected.
+- **Configurable Chimes** - Audio feedback for wake word detection and request completion.
 
 ## Prerequisites
 
 Before using this card, ensure you have:
 
-1. **Home Assistant** with the **Assist Pipeline** configured
-2. **openWakeWord add-on** installed and running (for wake word detection)
-3. **A configured Assist Pipeline** with:
+1. **Home Assistant** with the **Assist Pipeline** configured.
+2. **A configured Assist Pipeline** consists of:
    - Wake word detection (openWakeWord)
-   - Speech-to-Text (Whisper, Cloud, etc.)
-   - Conversation agent (Home Assistant, OpenAI, etc.)
-   - Text-to-Speech (Piper, Cloud, etc.)
+   - Speech-to-Text (Whisper, OpenAI, etc.)
+   - Conversation agent (Home Assistant, OpenAI, Qwen, etc.)
+   - Text-to-Speech (Piper, Kokoro, etc.)
 
 ## Installation
 
 ### HACS (Recommended)
 
-1. Open HACS in Home Assistant
-2. Click the three dots menu, then Custom repositories
-3. Add this repository URL and select Lovelace as the category
-4. Click Install
-5. Refresh your browser
+1. Open HACS in Home Assistant.
+2. Click the three dots menu, then Custom repositories.
+3. Add this repository URL and select Lovelace as the category.
+4. Click Install.
+5. Refresh your browser.
 
 ### Manual Installation
 
@@ -156,20 +155,20 @@ When the wake word is detected, this switch will be turned OFF, which exits the 
 
 ### Microphone not working
 
-1. Check browser permissions for microphone access
-2. Ensure you're using HTTPS (required for microphone access)
-3. Try the manual start button if auto-start fails
+1. Check browser permissions for microphone access.
+2. Ensure you're using HTTPS (required for microphone access).
+3. Try the manual start button if auto-start fails.
 
 ### Wake word not detected
 
-1. Verify openWakeWord add-on is running
-2. Check that your Assist pipeline has wake word detection configured
-3. Enable `debug: true` to see events in the browser console
+1. Verify that openWakeWord is running.
+2. Check that your Assist pipeline has wake word detection configured.
+3. Enable `debug: true` to see events in the browser console.
 
 ### No audio response
 
-1. Check that TTS is configured in your Assist pipeline
-2. Check browser audio permissions
+1. Check that TTS is configured in your Assist pipeline.
+2. Check browser audio permissions.
 
 ### Card not visible
 
