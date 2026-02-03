@@ -2,7 +2,7 @@
 
 Transform any browser into a voice-activated satellite for Home Assistant's Assist. This custom card enables wake word detection directly in your browser, turning tablets, wall-mounted displays, or any device with a microphone into a hands-free voice assistant.
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-blue.svg?style=for-the-badge)](https://github.com/hacs/integration)
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
 [![version](https://shields.io/github/v/release/jxlarrea/Voice-Satellite-Card-for-Home-Assistant?style=for-the-badge)](https://github.com/jxlarrea/Voice-Satellite-Card-for-Home-Assistant/releases)
 
 ![screenshot1](https://github.com/user-attachments/assets/32e34e0b-ce27-4e12-8efe-7b4d8500ed25)
