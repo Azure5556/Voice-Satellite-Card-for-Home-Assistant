@@ -605,7 +605,7 @@ class VoiceSatelliteCard extends HTMLElement {
         break;
         
       case 'error':
-        console.error('[VoiceSatellite] Pipeline error:', eventData);
+        console.error('[VoiceSatellite] Pipeline error:', eventData.code, '-', eventData.message);
         // Clear pipeline timeout - error is being handled, don't trigger timeout later
         this._clearPipelineTimeout();
         // Set flag so run-end doesn't also restart
@@ -614,9 +614,12 @@ class VoiceSatelliteCard extends HTMLElement {
         this._hideTranscription();
         this._hideResponse();
         
-        // Check error type
-        if (eventData.code === 'stt-no-text-recognized') {
-          // Silent timeout - just hide UI quietly and reconnect
+        // Check error type - some errors should be handled silently
+        if (eventData.code === 'stt-no-text-recognized' || 
+            eventData.code === 'duplicate_wake_up_detected') {
+          // Silent errors - just hide UI quietly and reconnect
+          // stt-no-text-recognized: user stayed silent after wake word
+          // duplicate_wake_up_detected: another satellite already handling this wake word
           this._state = State.IDLE;
           this._updateUI();
         } else {
