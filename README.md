@@ -104,6 +104,8 @@ auto_gain_control: true            # Enable automatic gain control
 bar_position: bottom               # 'bottom' or 'top'
 bar_height: 16                     # Height in pixels (2-40)
 bar_gradient: '#FF7777, #FF9977, #FFCC77, #CCFF77, #77FFAA, #77DDFF, #77AAFF, #AA77FF, #FF77CC'
+background_blur: true               # Blurs the background when active
+background_blur_intensity: 5        # Blur effect intensity
 
 # Appearance - Transcription Bubble (User Speech)
 show_transcription: true           # Show/hide the transcription bubble
