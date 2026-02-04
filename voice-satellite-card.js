@@ -8,7 +8,7 @@
  * - Intent processing  
  * - Text-to-speech response
  * 
- * @version 1.3.0
+ * @version 1.4.0
  * 
  * Features:
  * - AudioWorklet for efficient audio processing (falls back to ScriptProcessor)
@@ -94,6 +94,8 @@ class VoiceSatelliteCard extends HTMLElement {
     this._isSpeaking = false;
     this._reconnectAttempts = 0;
     this._reconnectTimeout = null;
+    this._pipelineTimeoutId = null;
+    this._errorHandlingRestart = false;
     
     // Bind visibility handler
     this._boundVisibilityHandler = this._handleVisibilityChange.bind(this);
@@ -142,6 +144,8 @@ class VoiceSatelliteCard extends HTMLElement {
       // Audio processing options (still used internally)
       wake_word_timeout: config.wake_word_timeout !== undefined ? config.wake_word_timeout : 0,
       stt_timeout: config.stt_timeout !== undefined ? config.stt_timeout : 0,
+      // Pipeline timeout (seconds) - 0 means no timeout
+      pipeline_timeout: config.pipeline_timeout !== undefined ? config.pipeline_timeout : 60,
       // Microphone processing options
       noise_suppression: config.noise_suppression !== false,
       auto_gain_control: config.auto_gain_control !== false,
@@ -502,6 +506,9 @@ class VoiceSatelliteCard extends HTMLElement {
           // Force state update
           this._state = State.WAKE_WORD_DETECTED;
           
+          // Start pipeline timeout if configured
+          this._startPipelineTimeout();
+          
           // Multiple attempts to show UI for slower devices
           var self = this;
           self._forceUIUpdate();
@@ -551,6 +558,8 @@ class VoiceSatelliteCard extends HTMLElement {
       case 'tts-start':
         this._setState(State.TTS);
         this._forceUIUpdate();
+        // Clear pipeline timeout - TTS has arrived, no longer stuck
+        this._clearPipelineTimeout();
         break;
         
       case 'tts-end':
@@ -564,26 +573,58 @@ class VoiceSatelliteCard extends HTMLElement {
         console.log('[VoiceSatellite] Pipeline run ended');
         this._binaryHandlerId = null;
         
+        // Note: Don't clear pipeline timeout here - it should only clear when TTS starts
+        // This handles cases where the pipeline ends without reaching TTS
+        
         // Only reset state if not playing TTS audio
         if (this._state !== State.TTS || !this._isSpeaking) {
-          if (this._config.chime_on_request_sent && this._state !== State.LISTENING) {
-            this._playChime('done');
+          // If error handler is already restarting, don't restart again
+          if (this._errorHandlingRestart) {
+            this._errorHandlingRestart = false;
+            break;
           }
           
-          // Force state to IDLE first, then restart
-          this._state = State.IDLE;
-          this._updateUI();
-          
-          setTimeout(function() {
-            if (self._isStreaming && !self._isPaused) {
-              self._restartPipeline();
+          // If we never reached TTS and timeout is still running, let it handle the restart
+          // Otherwise proceed normally
+          if (!this._pipelineTimeoutId) {
+            if (this._config.chime_on_request_sent && this._state !== State.LISTENING) {
+              this._playChime('done');
             }
-          }, 500);
+            
+            // Force state to IDLE first, then restart
+            this._state = State.IDLE;
+            this._updateUI();
+            
+            setTimeout(function() {
+              if (self._isStreaming && !self._isPaused) {
+                self._restartPipeline();
+              }
+            }, 500);
+          }
         }
         break;
         
       case 'error':
         console.error('[VoiceSatellite] Pipeline error:', eventData);
+        // Clear pipeline timeout - error is being handled, don't trigger timeout later
+        this._clearPipelineTimeout();
+        // Set flag so run-end doesn't also restart
+        this._errorHandlingRestart = true;
+        // Hide bubbles
+        this._hideTranscription();
+        this._hideResponse();
+        
+        // Check error type
+        if (eventData.code === 'stt-no-text-recognized') {
+          // Silent timeout - just hide UI quietly and reconnect
+          this._state = State.IDLE;
+          this._updateUI();
+        } else {
+          // Other errors - show error feedback
+          this._playChime('error');
+          this._flashError();
+        }
+        
         this._handlePipelineError();
         break;
     }
@@ -723,6 +764,9 @@ class VoiceSatelliteCard extends HTMLElement {
       this._reconnectTimeout = null;
     }
     
+    // Clear pipeline timeout
+    this._clearPipelineTimeout();
+    
     if (this._sendInterval) {
       clearInterval(this._sendInterval);
       this._sendInterval = null;
@@ -761,6 +805,77 @@ class VoiceSatelliteCard extends HTMLElement {
     console.log('[VoiceSatellite] Pipeline stopped');
   }
 
+  _startPipelineTimeout() {
+    var self = this;
+    
+    // Clear any existing timeout
+    this._clearPipelineTimeout();
+    
+    // Only set timeout if configured (> 0)
+    if (this._config.pipeline_timeout > 0) {
+      console.log('[VoiceSatellite] Starting pipeline timeout:', this._config.pipeline_timeout, 'seconds');
+      
+      this._pipelineTimeoutId = setTimeout(function() {
+        console.warn('[VoiceSatellite] Pipeline timeout! Restarting...');
+        
+        // Play error chime
+        self._playChime('error');
+        
+        // Flash red on the bar
+        self._flashError();
+        
+        // Hide any visible bubbles
+        self._hideTranscription();
+        self._hideResponse();
+        
+        // Force restart the pipeline after a brief delay for visual feedback
+        setTimeout(function() {
+          self._restartPipeline();
+        }, 1000);
+      }, this._config.pipeline_timeout * 1000);
+    }
+  }
+
+  _flashError() {
+    var bar = this._globalUI ? this._globalUI.querySelector('.vs-rainbow-bar') : null;
+    if (!bar) return;
+    
+    // Store original background
+    var originalBg = bar.style.background;
+    
+    // Flash red
+    bar.style.background = '#ff4444';
+    bar.classList.add('visible');
+    bar.style.opacity = '1';
+    
+    // Flash 3 times
+    var self = this;
+    var flashCount = 0;
+    var flashInterval = setInterval(function() {
+      flashCount++;
+      if (flashCount % 2 === 0) {
+        bar.style.background = '#ff4444';
+        bar.style.opacity = '1';
+      } else {
+        bar.style.opacity = '0.3';
+      }
+      
+      if (flashCount >= 6) {
+        clearInterval(flashInterval);
+        bar.style.background = originalBg;
+        bar.style.opacity = '';
+        bar.classList.remove('visible');
+      }
+    }, 150);
+  }
+
+  _clearPipelineTimeout() {
+    if (this._pipelineTimeoutId) {
+      clearTimeout(this._pipelineTimeoutId);
+      this._pipelineTimeoutId = null;
+    }
+  }
+
   async _playResponse(url) {
     var self = this;
     try {
@@ -771,6 +886,9 @@ class VoiceSatelliteCard extends HTMLElement {
       
       audio.onended = function() {
         self._isSpeaking = false;
+        
+        // Clear pipeline timeout - TTS completed successfully
+        self._clearPipelineTimeout();
         
         if (self._config.chime_on_request_sent) {
           self._playChime('done');
@@ -789,6 +907,7 @@ class VoiceSatelliteCard extends HTMLElement {
       
       audio.onerror = function() {
         self._isSpeaking = false;
+        // Don't clear timeout on audio error - let it trigger if needed
         self._state = State.IDLE;
         self._updateUI();
       };
@@ -812,19 +931,32 @@ class VoiceSatelliteCard extends HTMLElement {
       osc.type = 'sine';
       var volume = (this._config.chime_volume / 100) * 0.5; // Scale to max 0.5 to avoid clipping
       gain.gain.setValueAtTime(volume, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
       
       if (type === 'wake') {
+        // Rising tone: C5 -> E5 -> G5
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
         osc.frequency.setValueAtTime(523, ctx.currentTime);
         osc.frequency.setValueAtTime(659, ctx.currentTime + 0.08);
         osc.frequency.setValueAtTime(784, ctx.currentTime + 0.16);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.25);
+      } else if (type === 'error') {
+        // Error tone: Short low buzz
+        osc.type = 'square';
+        gain.gain.setValueAtTime(volume * 0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+        osc.frequency.setValueAtTime(300, ctx.currentTime);
+        osc.frequency.setValueAtTime(200, ctx.currentTime + 0.08);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
       } else {
+        // Done tone: G5 -> E5
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
         osc.frequency.setValueAtTime(784, ctx.currentTime);
         osc.frequency.setValueAtTime(659, ctx.currentTime + 0.08);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.25);
       }
-      
-      osc.start();
-      osc.stop(ctx.currentTime + 0.25);
     } catch (e) {}
   }
 
@@ -1321,6 +1453,11 @@ class VoiceSatelliteCardEditor extends HTMLElement {
         '<input type="text" id="wake_word_switch" value="' + (this._config.wake_word_switch || '') + '" placeholder="switch.tablet_screensaver">' +
         '<div class="help">Switch to turn OFF when wake word detected (e.g., Fully Kiosk screensaver)</div>' +
       '</div>' +
+      '<div class="row">' +
+        '<label>Pipeline Timeout (seconds)</label>' +
+        '<input type="number" id="pipeline_timeout" value="' + (this._config.pipeline_timeout !== undefined ? this._config.pipeline_timeout : 60) + '" min="0" max="300">' +
+        '<div class="help">Max time to wait for pipeline to complete after wake word. 0 = no timeout.</div>' +
+      '</div>' +
       '<div class="row checkbox-row">' +
         '<input type="checkbox" id="chime_on_wake_word"' + (this._config.chime_on_wake_word !== false ? ' checked' : '') + '>' +
         '<label for="chime_on_wake_word">Play chime on wake word detected</label>' +
@@ -1465,7 +1602,7 @@ class VoiceSatelliteCardEditor extends HTMLElement {
     
     // Set up fields
     var fields = ['bar_height', 'bar_position', 'bar_gradient', 'start_listening_on_load', 
-                  'wake_word_switch', 'chime_on_wake_word', 'chime_on_request_sent', 'debug',
+                  'wake_word_switch', 'pipeline_timeout', 'chime_on_wake_word', 'chime_on_request_sent', 'debug',
                   'noise_suppression', 'echo_cancellation', 'auto_gain_control',
                   'show_transcription', 'transcription_font_size', 'transcription_font_family', 'transcription_font_color', 
                   'transcription_font_bold', 'transcription_font_italic',
@@ -1525,7 +1662,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c VOICE-SATELLITE-CARD %c v1.3.0 ',
+  '%c VOICE-SATELLITE-CARD %c v1.4.0 ',
   'color: white; background: #4CAF50; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #4CAF50; background: white; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0; border: 1px solid #4CAF50;'
 );
