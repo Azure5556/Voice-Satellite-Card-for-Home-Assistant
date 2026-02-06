@@ -8,7 +8,7 @@
  * - Intent processing  
  * - Text-to-speech response
  * 
- * @version 1.8.0
+ * @version 1.9.0
  * 
  * Features:
  * - AudioWorklet for efficient audio processing (falls back to ScriptProcessor)
@@ -104,6 +104,7 @@ class VoiceSatelliteCard extends HTMLElement {
     this._pipelineTimeoutId = null;
     this._errorHandlingRestart = false;
     this._streamingResponse = '';
+    this._serviceUnavailable = false;
     
     // Bind visibility handler
     this._boundVisibilityHandler = this._handleVisibilityChange.bind(this);
@@ -392,13 +393,11 @@ class VoiceSatelliteCard extends HTMLElement {
         sample_rate: SAMPLE_RATE,
         timeout: this._config.wake_word_timeout
       },
-      pipeline: pipelineId
+      pipeline: pipelineId,
+      // Set overall pipeline timeout very high (24 hours) to prevent idle expiration
+      // The default is 300 seconds (5 minutes) which causes timeout errors during idle listening
+      timeout: 86400
     };
-    
-    // Add STT timeout if specified
-    if (this._config.stt_timeout > 0) {
-      pipelineOptions.timeout = this._config.stt_timeout;
-    }
     
     this._unsub = await this._hass.connection.subscribeMessage(
       function(event) { 
@@ -596,28 +595,57 @@ class VoiceSatelliteCard extends HTMLElement {
     var eventData = event.data || {};
     
     if (this._config.debug) {
-      console.log('[VoiceSatellite] Event:', eventType, eventData);
+      console.log('[VoiceSatellite] Event:', eventType, JSON.stringify(eventData));
     }
     
-    // Reset reconnect attempts on successful event
-    this._reconnectAttempts = 0;
+    // Don't reset reconnect attempts here - only reset on successful wake word detection
+    // This allows the counter to accumulate when service is unavailable
     
     switch (eventType) {
       case 'run-start':
         if (eventData.runner_data && eventData.runner_data.stt_binary_handler_id !== undefined) {
           this._binaryHandlerId = eventData.runner_data.stt_binary_handler_id;
         }
+        // Don't clear _serviceUnavailable here - we need to wait for wake_word-end
+        // to confirm the service is actually working (non-empty wake_word_output)
         this._setState(State.LISTENING);
         console.log('[VoiceSatellite] Pipeline started, binary_handler_id:', this._binaryHandlerId);
         break;
         
       case 'wake_word-start':
         this._setState(State.LISTENING);
+        // If service was unavailable, set a timer to clear the error bar
+        // If we don't get an empty wake_word-end within 2 seconds, service is working
+        if (this._serviceUnavailable) {
+          var self = this;
+          this._serviceRecoveryTimer = setTimeout(function() {
+            if (self._serviceUnavailable) {
+              console.log('[VoiceSatellite] Service appears recovered (no immediate error)');
+              self._serviceUnavailable = false;
+              self._reconnectAttempts = 0;
+              self._hideErrorBar();
+            }
+          }, 2000);
+        }
         break;
         
       case 'wake_word-end':
-        if (eventData.wake_word_output) {
-          console.log('[VoiceSatellite] Wake word detected!');
+        // Clear the service recovery timer if it's running
+        if (this._serviceRecoveryTimer) {
+          clearTimeout(this._serviceRecoveryTimer);
+          this._serviceRecoveryTimer = null;
+        }
+        // Only trigger if wake_word_output contains actual data (wake_word_id)
+        // An empty object {} means no wake word was detected (e.g., service unavailable)
+        if (eventData.wake_word_output && Object.keys(eventData.wake_word_output).length > 0) {
+          // Service is working - clear error state and reset attempts
+          this._reconnectAttempts = 0;
+          if (this._serviceUnavailable) {
+            this._serviceUnavailable = false;
+            this._hideErrorBar();
+            console.log('[VoiceSatellite] Service recovered, cleared error state');
+          }
+          console.log('[VoiceSatellite] Wake word detected:', JSON.stringify(eventData.wake_word_output));
           
           // Force hide transcription and response from previous run
           this._hideTranscription();
@@ -645,6 +673,19 @@ class VoiceSatelliteCard extends HTMLElement {
               entity_id: this._config.wake_word_switch
             });
           }
+        } else {
+          console.log('[VoiceSatellite] wake_word-end received with empty output (service may be unavailable)');
+          // Mark service as unavailable and show error bar immediately
+          this._serviceUnavailable = true;
+          this._showErrorBar();
+          // Only play chime on first detection
+          if (this._reconnectAttempts === 0) {
+            this._playChime('error');
+          }
+          // Set flag so run-end doesn't also restart
+          this._errorHandlingRestart = true;
+          // Use service unavailable reconnect (keeps trying indefinitely)
+          this._handleServiceUnavailable();
         }
         break;
         
@@ -758,6 +799,9 @@ class VoiceSatelliteCard extends HTMLElement {
                            eventData.code === 'duplicate_wake_up_detected' ||
                            eventData.code === 'timeout';
         
+        // Check if this is a pipeline idle timeout (expected behavior)
+        var isIdleTimeout = eventData.code === 'timeout';
+        
         if (isSilentError || !isActiveInteraction) {
           // Silent handling - just hide UI quietly and reconnect
           this._state = State.IDLE;
@@ -768,7 +812,13 @@ class VoiceSatelliteCard extends HTMLElement {
           this._flashError();
         }
         
-        this._handlePipelineError();
+        if (isIdleTimeout) {
+          // Pipeline expired due to idle timeout - restart immediately, no delay needed
+          console.log('[VoiceSatellite] Pipeline idle timeout expired, restarting immediately');
+          this._restartPipeline();
+        } else {
+          this._handlePipelineError();
+        }
         break;
     }
   }
@@ -792,6 +842,25 @@ class VoiceSatelliteCard extends HTMLElement {
         self._restartPipeline();
       }
     }, RECONNECT_DELAY_MS);
+  }
+
+  _handleServiceUnavailable() {
+    var self = this;
+    
+    this._reconnectAttempts++;
+    
+    // Use exponential backoff: 5s, 10s, 15s, max 30s
+    var delay = Math.min(5000 + (this._reconnectAttempts - 1) * 5000, 30000);
+    
+    console.log('[VoiceSatellite] Service unavailable, retrying in', delay, 'ms (attempt', this._reconnectAttempts, ')');
+    
+    this._reconnectTimeout = setTimeout(async function() {
+      if (self._isStreaming && !self._isPaused) {
+        // Reconnect microphone to ensure fresh audio stream
+        await self._reconnectMicrophone();
+        self._restartPipeline();
+      }
+    }, delay);
   }
 
   async _restartPipeline() {
@@ -866,7 +935,7 @@ class VoiceSatelliteCard extends HTMLElement {
   async _reconnectMicrophone() {
     console.log('[VoiceSatellite] Reconnecting microphone...');
     
-    // Stop existing audio processing but keep the stream
+    // Stop existing audio processing
     if (this._workletNode) {
       this._workletNode.disconnect();
       this._workletNode = null;
@@ -877,6 +946,55 @@ class VoiceSatelliteCard extends HTMLElement {
       this._processor = null;
     }
     
+    // If service was unavailable, do a full microphone reset
+    if (this._serviceUnavailable) {
+      console.log('[VoiceSatellite] Full microphone reset for service recovery');
+      
+      // Stop old stream
+      if (this._mediaStream) {
+        this._mediaStream.getTracks().forEach(function(track) { track.stop(); });
+        this._mediaStream = null;
+      }
+      
+      // Close old audio context
+      if (this._audioContext) {
+        await this._audioContext.close();
+        this._audioContext = null;
+      }
+      
+      // Get fresh microphone
+      try {
+        this._mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+        
+        this._audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        var source = this._audioContext.createMediaStreamSource(this._mediaStream);
+        
+        if (this._useWorklet) {
+          try {
+            await this._setupAudioWorklet(source);
+            console.log('[VoiceSatellite] AudioWorklet fully recreated');
+          } catch (e) {
+            console.log('[VoiceSatellite] AudioWorklet failed, using ScriptProcessor');
+            this._setupScriptProcessor(source);
+            this._useWorklet = false;
+          }
+        } else {
+          this._setupScriptProcessor(source);
+        }
+        return;
+      } catch (e) {
+        console.error('[VoiceSatellite] Failed to get fresh microphone:', e);
+      }
+    }
+    
+    // Normal reconnect (tab visibility change, etc.)
     // Resume audio context if needed
     if (this._audioContext && this._audioContext.state === 'suspended') {
       await this._audioContext.resume();
@@ -1020,6 +1138,37 @@ class VoiceSatelliteCard extends HTMLElement {
         bar.classList.remove('visible');
       }
     }, 150);
+  }
+
+  _showErrorBar() {
+    var bar = this._globalUI ? this._globalUI.querySelector('.vs-rainbow-bar') : null;
+    if (!bar) {
+      // Try to ensure UI exists first
+      if (!this._globalUI || !document.body.contains(this._globalUI)) {
+        this._ensureGlobalUI();
+        bar = this._globalUI ? this._globalUI.querySelector('.vs-rainbow-bar') : null;
+      }
+      if (!bar) return;
+    }
+    
+    // Show red gradient bar with flowing animation
+    bar.style.background = 'linear-gradient(90deg, #ff2222, #ff6666, #ff4444, #ff8888, #ff4444, #ff6666, #ff2222)';
+    bar.style.backgroundSize = '200% 100%';
+    bar.classList.add('visible');
+    bar.classList.add('error-mode');
+    bar.style.opacity = '1';
+  }
+
+  _hideErrorBar() {
+    var bar = this._globalUI ? this._globalUI.querySelector('.vs-rainbow-bar') : null;
+    if (!bar) return;
+    
+    // Restore gradient background
+    bar.style.background = '';
+    bar.style.backgroundSize = '';
+    bar.style.opacity = '';
+    bar.classList.remove('visible');
+    bar.classList.remove('error-mode');
   }
 
   _clearPipelineTimeout() {
@@ -1290,12 +1439,19 @@ class VoiceSatelliteCard extends HTMLElement {
     
     var s = states[this._state] || states[State.IDLE];
     
+    // If service is unavailable and we're going to IDLE/LISTENING, keep error bar visible
+    if (this._serviceUnavailable && !s.active) {
+      return;
+    }
+    
     // Clear any inline styles that might override CSS
     bar.style.opacity = '';
     bar.style.transition = '';
+    bar.style.background = '';
+    bar.style.backgroundSize = '';
     
     // Force remove all classes first
-    bar.classList.remove('visible', 'listening', 'processing', 'speaking');
+    bar.classList.remove('visible', 'listening', 'processing', 'speaking', 'error-mode');
     
     // Force a repaint by reading offsetHeight
     bar.offsetHeight;
@@ -1326,8 +1482,12 @@ class VoiceSatelliteCard extends HTMLElement {
     );
     
     if (shouldBeVisible) {
-      // Remove all animation classes first
-      bar.classList.remove('listening', 'processing', 'speaking');
+      // Remove all animation classes first (including error-mode)
+      bar.classList.remove('listening', 'processing', 'speaking', 'error-mode');
+      // Clear any inline styles from error bar
+      bar.style.background = '';
+      bar.style.backgroundSize = '';
+      
       bar.classList.add('visible');
       
       // Clear inline opacity so CSS animations can control it
@@ -1487,6 +1647,10 @@ class VoiceSatelliteCard extends HTMLElement {
         '}' +
         '#voice-satellite-ui .vs-rainbow-bar.speaking {' +
           'animation: vs-flow 1.5s linear infinite;' +
+          'height: ' + (height + 2) + 'px;' +
+        '}' +
+        '#voice-satellite-ui .vs-rainbow-bar.error-mode {' +
+          'animation: vs-flow 2s linear infinite;' +
           'height: ' + (height + 2) + 'px;' +
         '}' +
         '@keyframes vs-flow {' +
