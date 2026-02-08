@@ -8,7 +8,7 @@
  * - Intent processing  
  * - Text-to-speech response
  * 
- * @version 1.10.0
+ * @version 1.11.0
  * 
  * Features:
  * - AudioWorklet for efficient audio processing (falls back to ScriptProcessor)
@@ -94,6 +94,7 @@ class VoiceSatelliteCard extends HTMLElement {
     this._unsub = null;
     this._sendInterval = null;
     this._sourceNode = null;
+    this._gainNode = null;
     
     this._isStreaming = false;
     this._isPaused = false;
@@ -108,8 +109,6 @@ class VoiceSatelliteCard extends HTMLElement {
     this._serviceUnavailable = false;
     this._resumeDebounceTimer = null;
     this._serviceRecoveryTimer = null;
-    this._pipelineRefreshTimer = null;
-    this._pipelineStartTime = null;
     
     // Bind visibility handler
     this._boundVisibilityHandler = this._handleVisibilityChange.bind(this);
@@ -127,8 +126,8 @@ class VoiceSatelliteCard extends HTMLElement {
       bar_gradient: '#FF7777, #FF9977, #FFCC77, #CCFF77, #77FFAA, #77DDFF, #77AAFF, #AA77FF, #FF77CC',
       start_listening_on_load: true,
       noise_suppression: true,
-      auto_gain_control: true,
       echo_cancellation: true,
+      mic_sensitivity: 1.0,
       chime_on_wake_word: true,
       chime_on_request_sent: true,
       wake_word_switch: '',
@@ -162,8 +161,9 @@ class VoiceSatelliteCard extends HTMLElement {
       pipeline_timeout: config.pipeline_timeout !== undefined ? config.pipeline_timeout : 60,
       // Microphone processing options
       noise_suppression: config.noise_suppression !== false,
-      auto_gain_control: config.auto_gain_control !== false,
       echo_cancellation: config.echo_cancellation !== false,
+      // Microphone sensitivity (gain multiplier: 0.1 to 3.0, default 1.0)
+      mic_sensitivity: config.mic_sensitivity !== undefined ? Math.max(0.1, Math.min(3.0, config.mic_sensitivity)) : 1.0,
       // Transcription bubble options (user speech)
       show_transcription: config.show_transcription !== false,
       transcription_font_size: config.transcription_font_size !== undefined ? config.transcription_font_size : 20,
@@ -190,10 +190,16 @@ class VoiceSatelliteCard extends HTMLElement {
       // Background blur
       background_blur: config.background_blur !== false,
       background_blur_intensity: config.background_blur_intensity !== undefined ? config.background_blur_intensity : 5,
-      // Pipeline refresh interval (minutes) - restart pipeline periodically to keep TTS tokens fresh
-      // Default 30 minutes, 0 to disable
-      pipeline_refresh_interval: config.pipeline_refresh_interval !== undefined ? config.pipeline_refresh_interval : 30
+      // Pipeline idle timeout (seconds) - pipeline restarts after this time to keep TTS tokens fresh
+      // Default 300 seconds (5 minutes), 0 means no timeout (not recommended)
+      pipeline_idle_timeout: config.pipeline_idle_timeout !== undefined ? config.pipeline_idle_timeout : 300
     };
+    
+    // Update gain node if it exists (live update without restart)
+    if (this._gainNode && this._audioContext) {
+      this._gainNode.gain.setValueAtTime(this._config.mic_sensitivity, this._audioContext.currentTime);
+      console.log('[VoiceSatellite] Mic sensitivity updated to:', this._config.mic_sensitivity);
+    }
     
     this._render();
   }
@@ -402,9 +408,9 @@ class VoiceSatelliteCard extends HTMLElement {
         timeout: this._config.wake_word_timeout
       },
       pipeline: pipelineId,
-      // Set overall pipeline timeout very high (24 hours) to prevent idle expiration
-      // The default is 300 seconds (5 minutes) which causes timeout errors during idle listening
-      timeout: 86400
+      // Pipeline idle timeout in seconds - pipeline will end and restart after this time
+      // This ensures TTS tokens stay fresh. Default is 300 seconds (5 minutes)
+      timeout: this._config.pipeline_idle_timeout
     };
     
     this._unsub = await this._hass.connection.subscribeMessage(
@@ -450,20 +456,28 @@ class VoiceSatelliteCard extends HTMLElement {
         sampleRate: SAMPLE_RATE,
         echoCancellation: this._config.echo_cancellation,
         noiseSuppression: this._config.noise_suppression,
-        autoGainControl: this._config.auto_gain_control
+        autoGainControl: false  // Disabled - we use manual mic_sensitivity instead
       }
     });
     
     this._sourceNode = this._audioContext.createMediaStreamSource(this._mediaStream);
     
+    // Create gain node for mic sensitivity control
+    this._gainNode = this._audioContext.createGain();
+    this._gainNode.gain.value = this._config.mic_sensitivity;
+    console.log('[VoiceSatellite] Mic sensitivity set to:', this._config.mic_sensitivity);
+    
+    // Connect source -> gain
+    this._sourceNode.connect(this._gainNode);
+    
     // Try to use AudioWorklet (more efficient), fall back to ScriptProcessor
     try {
-      await this._setupAudioWorklet(this._sourceNode);
+      await this._setupAudioWorklet(this._gainNode);
       this._useWorklet = true;
       console.log('[VoiceSatellite] Using AudioWorklet for audio processing');
     } catch (e) {
       console.log('[VoiceSatellite] AudioWorklet not available, using ScriptProcessor:', e.message);
-      this._setupScriptProcessor(this._sourceNode);
+      this._setupScriptProcessor(this._gainNode);
       this._useWorklet = false;
     }
     
@@ -528,6 +542,21 @@ class VoiceSatelliteCard extends HTMLElement {
     
     source.connect(this._processor);
     this._processor.connect(this._audioContext.destination);
+  }
+
+  /**
+   * Set microphone sensitivity dynamically
+   * @param {number} value - Gain value (0.1 to 3.0, where 1.0 is normal)
+   */
+  setMicSensitivity(value) {
+    var clampedValue = Math.max(0.1, Math.min(3.0, value));
+    this._config.mic_sensitivity = clampedValue;
+    
+    if (this._gainNode) {
+      // Use setValueAtTime to avoid audio clicks
+      this._gainNode.gain.setValueAtTime(clampedValue, this._audioContext.currentTime);
+      console.log('[VoiceSatellite] Mic sensitivity changed to:', clampedValue);
+    }
   }
 
   _convertToPcm(floatData) {
@@ -614,9 +643,6 @@ class VoiceSatelliteCard extends HTMLElement {
         if (eventData.runner_data && eventData.runner_data.stt_binary_handler_id !== undefined) {
           this._binaryHandlerId = eventData.runner_data.stt_binary_handler_id;
         }
-        // Track when pipeline started for refresh timer
-        this._pipelineStartTime = Date.now();
-        this._startPipelineRefreshTimer();
         // Don't clear _serviceUnavailable here - we need to wait for wake_word-end
         // to confirm the service is actually working (non-empty wake_word_output)
         this._setState(State.LISTENING);
@@ -1109,9 +1135,6 @@ class VoiceSatelliteCard extends HTMLElement {
     // Clear pipeline timeout
     this._clearPipelineTimeout();
     
-    // Clear pipeline refresh timer
-    this._clearPipelineRefreshTimer();
-    
     if (this._sendInterval) {
       clearInterval(this._sendInterval);
       this._sendInterval = null;
@@ -1178,42 +1201,6 @@ class VoiceSatelliteCard extends HTMLElement {
           self._restartPipeline();
         }, 1000);
       }, this._config.pipeline_timeout * 1000);
-    }
-  }
-
-  _startPipelineRefreshTimer() {
-    var self = this;
-    
-    // Clear any existing refresh timer
-    this._clearPipelineRefreshTimer();
-    
-    // If refresh interval is 0 or not set, don't start timer
-    if (!this._config.pipeline_refresh_interval) return;
-    
-    var refreshMs = this._config.pipeline_refresh_interval * 60 * 1000;
-    
-    console.log('[VoiceSatellite] Pipeline refresh timer started:', this._config.pipeline_refresh_interval, 'minutes');
-    
-    this._pipelineRefreshTimer = setTimeout(function() {
-      // Only refresh if we're in idle listening state (not actively processing)
-      if (self._isStreaming && !self._isPaused && 
-          (self._state === State.LISTENING || self._state === State.IDLE)) {
-        console.log('[VoiceSatellite] Pipeline refresh - restarting to get fresh TTS token');
-        self._restartPipeline();
-      } else {
-        // Not in idle state, try again in 1 minute
-        console.log('[VoiceSatellite] Pipeline refresh deferred - not in idle state');
-        self._pipelineRefreshTimer = setTimeout(function() {
-          self._startPipelineRefreshTimer();
-        }, 60000);
-      }
-    }, refreshMs);
-  }
-
-  _clearPipelineRefreshTimer() {
-    if (this._pipelineRefreshTimer) {
-      clearTimeout(this._pipelineRefreshTimer);
-      this._pipelineRefreshTimer = null;
     }
   }
 
@@ -1842,7 +1829,7 @@ class VoiceSatelliteCard extends HTMLElement {
     document.body.appendChild(container);
     this._globalUI = container;
     
-    // Add click handler
+    // Add click handler for start button
     container.querySelector('.vs-start-btn').addEventListener('click', function() { 
       self._handleStartClick(); 
     });
@@ -1955,10 +1942,12 @@ class VoiceSatelliteCardEditor extends HTMLElement {
         '<input type="checkbox" id="echo_cancellation"' + (this._config.echo_cancellation !== false ? ' checked' : '') + '>' +
         '<label for="echo_cancellation">Echo Cancellation</label>' +
       '</div>' +
-      '<div class="row checkbox-row">' +
-        '<input type="checkbox" id="auto_gain_control"' + (this._config.auto_gain_control !== false ? ' checked' : '') + '>' +
-        '<label for="auto_gain_control">Auto Gain Control</label>' +
+      '<div class="row">' +
+        '<label>Mic Sensitivity</label>' +
+        '<input type="range" id="mic_sensitivity" min="10" max="300" value="' + Math.round((this._config.mic_sensitivity || 1.0) * 100) + '" style="flex:1; margin-right: 8px;">' +
+        '<span id="mic_sensitivity_value" style="min-width: 45px; text-align: right;">' + Math.round((this._config.mic_sensitivity || 1.0) * 100) + '%</span>' +
       '</div>' +
+      '<div class="help" style="margin-top: -8px; margin-bottom: 12px;">10% = very quiet, 100% = normal, 300% = boosted</div>' +
       
       '<div class="section">Appearance - Bar</div>' +
       '<div class="row">' +
@@ -2082,7 +2071,7 @@ class VoiceSatelliteCardEditor extends HTMLElement {
     // Set up fields
     var fields = ['bar_height', 'bar_position', 'bar_gradient', 'start_listening_on_load', 
                   'wake_word_switch', 'pipeline_timeout', 'chime_on_wake_word', 'chime_on_request_sent', 'debug',
-                  'noise_suppression', 'echo_cancellation', 'auto_gain_control',
+                  'noise_suppression', 'echo_cancellation', 'mic_sensitivity',
                   'show_transcription', 'transcription_font_size', 'transcription_font_family', 'transcription_font_color', 
                   'transcription_font_bold', 'transcription_font_italic',
                   'transcription_background', 'transcription_border_color', 'transcription_padding', 'transcription_rounded',
@@ -2100,6 +2089,15 @@ class VoiceSatelliteCardEditor extends HTMLElement {
         }
       }
     });
+    
+    // Special handler for mic_sensitivity to update the display value
+    var micSlider = this.querySelector('#mic_sensitivity');
+    var micValue = this.querySelector('#mic_sensitivity_value');
+    if (micSlider && micValue) {
+      micSlider.addEventListener('input', function(e) {
+        micValue.textContent = e.target.value + '%';
+      });
+    }
   }
 
   _valueChanged(key, value) {
@@ -2121,6 +2119,10 @@ class VoiceSatelliteCardEditor extends HTMLElement {
       value = t.checked;
     } else if (t.type === 'number' || t.type === 'range') {
       value = parseFloat(t.value);
+      // Convert mic_sensitivity from percentage to decimal
+      if (t.id === 'mic_sensitivity') {
+        value = value / 100;
+      }
     } else {
       value = t.value;
     }
@@ -2141,7 +2143,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c VOICE-SATELLITE-CARD %c v1.7.0 ',
+  '%c VOICE-SATELLITE-CARD %c v1.11.0 ',
   'color: white; background: #4CAF50; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #4CAF50; background: white; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0; border: 1px solid #4CAF50;'
 );
