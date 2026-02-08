@@ -1,6 +1,5 @@
 {
   "name": "Voice Satellite Card",
-  "description": "Transform any browser into a voice-activated satellite for Home Assistant's Assist with wake word detection",
   "render_readme": true,
   "filename": "voice-satellite-card.js",
   "homeassistant": "2025.1.2"
