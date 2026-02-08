@@ -92,7 +92,7 @@ start_listening_on_load: true      # Auto-start on page load
 wake_word_switch: ''               # Switch to turn OFF when wake word detected
                                    # e.g., 'switch.tablet_screensaver'
 pipeline_timeout: 60               # Max seconds to wait for pipeline response (0 = no timeout)
-pipeline_refresh_interval: 30      # Minutes between pipeline restarts to keep TTS fresh (0 = disable)
+pipeline_idle_timeout: 300         # Seconds before pipeline restarts to keep TTS fresh (default 5 min)
 chime_on_wake_word: true           # Play chime when wake word detected
 chime_on_request_sent: true        # Play chime after request processed
 debug: false                       # Show debug info in browser console
@@ -100,7 +100,7 @@ debug: false                       # Show debug info in browser console
 # Microphone Processing
 noise_suppression: true            # Enable noise suppression
 echo_cancellation: true            # Enable echo cancellation
-auto_gain_control: true            # Enable automatic gain control
+mic_sensitivity: 1.0               # Microphone sensitivity (0.1-3.0, default 1.0)
 
 # Appearance - Bar
 bar_position: bottom               # 'bottom' or 'top'
