@@ -8,7 +8,7 @@
  * - Intent processing  
  * - Text-to-speech response
  * 
- * @version 1.12.0
+ * @version 1.13.0
  * 
  * Features:
  * - AudioWorklet for efficient audio processing (falls back to ScriptProcessor)
@@ -803,6 +803,7 @@ class VoiceSatelliteCard extends HTMLElement {
         
         // Some errors are expected and should restart immediately without counting as failures
         var isExpectedError = eventData.code === 'stt-no-text-recognized' || 
+                              eventData.code === 'wake-word-timeout' ||
                               eventData.code === 'duplicate_wake_up_detected' ||
                               eventData.code === 'timeout';
         
@@ -2099,7 +2100,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c VOICE-SATELLITE-CARD %c v1.12.0 ',
+  '%c VOICE-SATELLITE-CARD %c v1.13.0 ',
   'color: white; background: #4CAF50; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;',
   'color: #4CAF50; background: white; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0; border: 1px solid #4CAF50;'
 );
