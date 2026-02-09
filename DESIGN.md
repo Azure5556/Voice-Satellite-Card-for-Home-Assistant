@@ -182,6 +182,8 @@ These are normal operational events. They trigger immediate pipeline restart wit
 | `stt-no-text-recognized` | User spoke but no text was recognized |
 | `duplicate_wake_up_detected` | Wake word already being processed (note: underscores, not dashes — HA API inconsistency) |
 
+**Interaction-aware cleanup:** Some expected errors (notably `stt-no-text-recognized`) occur after the wake word was detected, meaning the blur overlay and transcription bubble are still visible. Before restarting, the handler checks whether the current state is an active interaction state (WAKE_WORD_DETECTED, STT, INTENT, TTS). If so, it hides the blur overlay, transcription, and response bubbles, and plays the done chime. For background expected errors like `timeout` or `wake-word-timeout`, the state is LISTENING so no cleanup runs.
+
 ### 7.2 Unexpected Errors
 
 All other error codes (`stt-stream-failed`, `wake-stream-failed`, `intent-failed`, `tts-failed`, etc.) trigger full error handling:
@@ -651,3 +653,4 @@ When recreating or modifying this card, verify:
 - [ ] `_ttsPlaying` flag used for all TTS state checks (not `_currentAudio`)
 - [ ] `_ttsEndTimer` cleans up UI after 2s for remote playback
 - [ ] `setConfig` propagates config to `window._voiceSatelliteInstance` for live updates
+- [ ] Expected errors clean up UI (blur, bubbles) and play done chime if user was mid-interaction
