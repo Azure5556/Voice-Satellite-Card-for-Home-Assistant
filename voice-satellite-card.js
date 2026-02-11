@@ -1,5 +1,5 @@
 /**
- * Voice Satellite Card v2.3.0
+ * Voice Satellite Card v2.4.0
  * Transform your browser into a voice satellite for Home Assistant Assist
  * 
  * A custom Lovelace card that enables wake word detection, speech-to-text,
@@ -145,6 +145,7 @@ class VoiceSatelliteCard extends HTMLElement {
     this._globalUI = null;
     this._streamedResponse = '';
     this._lastTapTime = 0;
+    this._lastTapWasTouch = false;
     this._doubleTapHandler = null;
 
     // Visibility
@@ -363,11 +364,11 @@ class VoiceSatelliteCard extends HTMLElement {
 
       '#voice-satellite-ui .vs-chat-container {' +
         'position: fixed; left: 50%; transform: translateX(-50%);' +
-        'display: flex; flex-direction: column; align-items: center; gap: 8px;' +
+        'display: none; flex-direction: column; align-items: center; gap: 8px;' +
         'max-width: 80%; width: 80%; z-index: 10001;' +
         'pointer-events: none; overflow: visible;' +
       '}' +
-      '#voice-satellite-ui .vs-chat-container.visible { pointer-events: auto; }' +
+      '#voice-satellite-ui .vs-chat-container.visible { display: flex; pointer-events: auto; }' +
       '#voice-satellite-ui .vs-chat-msg {' +
         'max-width: 85%; padding: 12px; opacity: 0; text-align: center;' +
         'box-shadow: 0 4px 12px rgba(0,0,0,0.15);' +
@@ -929,6 +930,13 @@ class VoiceSatelliteCard extends HTMLElement {
     // (stt-end, intent-end, tts-end) after we've cleaned up the UI on tab hide.
     if (this._isPaused) {
       this._log('event', 'Ignoring event while paused: ' + message.type);
+      return;
+    }
+
+    // Ignore events while restarting — old subscription may deliver straggling
+    // events (e.g. intent-progress) after double-tap cancel cleared the UI.
+    if (this._isRestarting) {
+      this._log('event', 'Ignoring event while restarting: ' + message.type);
       return;
     }
 
@@ -1542,9 +1550,12 @@ class VoiceSatelliteCard extends HTMLElement {
   _chatClear() {
     if (!this._globalUI) return;
     var container = this._globalUI.querySelector('.vs-chat-container');
-    container.innerHTML = '';
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
     container.classList.remove('visible');
     this._chatStreamEl = null;
+    this._streamedResponse = '';
   }
 
   _showErrorBar() {
@@ -1802,6 +1813,11 @@ class VoiceSatelliteCard extends HTMLElement {
       var activeStates = [State.WAKE_WORD_DETECTED, State.STT, State.INTENT, State.TTS];
       if (activeStates.indexOf(self._state) === -1 && !self._ttsPlaying) return;
 
+      // Ignore click events that follow a recent touch (prevents single
+      // physical tap from counting as two events on touch devices)
+      if (e.type === 'click' && self._lastTapWasTouch) return;
+      self._lastTapWasTouch = (e.type === 'touchstart');
+
       var now = Date.now();
       var timeSinceLastTap = now - self._lastTapTime;
       self._lastTapTime = now;
@@ -1819,6 +1835,10 @@ class VoiceSatelliteCard extends HTMLElement {
         // Clear continue conversation state
         self._shouldContinue = false;
         self._continueConversationId = null;
+
+        // Set state to IDLE first — this prevents straggling pipeline events
+        // (e.g. intent-progress) from recreating bubbles after _chatClear.
+        self._setState(State.IDLE);
 
         // Clean up all UI
         self._chatClear();
@@ -2258,7 +2278,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c VOICE-SATELLITE-CARD %c v2.3.0 ',
+  '%c VOICE-SATELLITE-CARD %c v2.4.0 ',
   'color: white; background: #03a9f4; font-weight: bold;',
   'color: #03a9f4; background: white; font-weight: bold;'
 );
