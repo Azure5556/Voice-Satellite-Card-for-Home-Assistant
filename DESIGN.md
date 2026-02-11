@@ -93,16 +93,19 @@ The container is a flex column positioned at the bottom of the screen above the 
 
 - `_chatAddUser(text)` — appends a user message (styled with transcription config)
 - `_chatAddAssistant(text)` — appends an assistant message (styled with response config), stores element as `_chatStreamEl`
-- `_chatUpdateAssistant(text)` — updates the current `_chatStreamEl` text (used for streaming)
+- `_chatUpdateAssistant(text)` — updates the current `_chatStreamEl` with a trailing text fade effect (see below)
 - `_chatClear()` — removes all messages, hides container, resets `_chatStreamEl`
+- `_escapeHtml(str)` — escapes HTML entities for safe innerHTML use in streaming fade
 
 **Legacy API wrappers** route old calls to the chat container so all existing callers work unchanged:
 
 - `_showTranscription(text)` → `_chatAddUser(text)` (respects `show_transcription` config)
-- `_showResponse(text)` → `_chatAddAssistant(text)` or `_chatUpdateAssistant(text)` if `_chatStreamEl` exists (respects `show_response` config)
+- `_showResponse(text)` → sets final text via `textContent` (no fade) if `_chatStreamEl` exists, or `_chatAddAssistant(text)` for new bubble (respects `show_response` config)
 - `_updateResponse(text)` → creates or updates assistant bubble via `_chatStreamEl`
 - `_hideTranscription()` → no-op (messages persist until `_chatClear`)
 - `_hideResponse()` → no-op (messages persist until `_chatClear`)
+
+**Streaming text fade:** During streaming, `_chatUpdateAssistant` applies a trailing character fade to give the appearance of text flowing in smoothly. The last 24 characters (`FADE_LEN`) are each wrapped in a `<span>` with decreasing opacity — the character right after the solid text is at full opacity, and the very last character fades to near-transparent. As new chunks arrive and the text grows, the fade window slides forward. When `_handleIntentEnd` fires with the final complete text, `_showResponse` sets `textContent` directly (no spans, no fade), making all text crisp and clean. For short texts (≤ `FADE_LEN` characters), no fade is applied.
 
 **Single-turn behavior:** One user message + one assistant message appear during the interaction, then `_chatClear()` removes everything when the conversation ends.
 
@@ -786,3 +789,6 @@ When recreating or modifying this card, verify:
 - [ ] `_handleIntentProgress` does NOT restart pipeline at `tts_start_streaming` (text still streaming)
 - [ ] `_handleTtsEnd` skips playback if `_ttsPlaying` already true (streaming started early)
 - [ ] `_streamingTtsUrl` reset to null on every `run-start` to prevent stale URLs
+- [ ] `_chatUpdateAssistant` applies trailing 24-char fade via per-character opacity spans
+- [ ] `_showResponse` sets final text via `textContent` (no fade spans) to clear streaming effect
+- [ ] `_escapeHtml` used for all innerHTML in streaming fade to prevent XSS from response text
