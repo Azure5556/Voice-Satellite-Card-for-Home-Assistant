@@ -139,6 +139,7 @@ class VoiceSatelliteCard extends HTMLElement {
     this._currentAudio = null;
     this._ttsPlaying = false;
     this._ttsEndTimer = null;
+    this._streamingTtsUrl = null;
 
     // UI
     this._globalUI = null;
@@ -996,6 +997,14 @@ class VoiceSatelliteCard extends HTMLElement {
     this._binaryHandlerId = eventData.runner_data.stt_binary_handler_id;
     this._resetIdleTimeout();
 
+    // Store streaming TTS URL if provided upfront by HA
+    this._streamingTtsUrl = null;
+    if (eventData.tts_output && eventData.tts_output.url && eventData.tts_output.stream_response) {
+      var url = eventData.tts_output.url;
+      this._streamingTtsUrl = url.startsWith('http') ? url : window.location.origin + url;
+      this._log('tts', 'Streaming TTS URL available: ' + this._streamingTtsUrl);
+    }
+
     // In continue conversation mode, go straight to STT state
     // to keep the bar visible (user is expected to speak immediately)
     if (this._continueMode) {
@@ -1155,6 +1164,19 @@ class VoiceSatelliteCard extends HTMLElement {
   }
 
   _handleIntentProgress(eventData) {
+    // HA signals that TTS has started generating audio from partial text.
+    // Start playing the streaming TTS URL immediately — don't wait for tts-end.
+    // NOTE: We do NOT restart the pipeline here for barge-in because text chunks
+    // (intent-progress) keep arriving after tts_start_streaming. Restarting would
+    // unsubscribe and lose those remaining chunks. The pipeline restart happens
+    // later in _handleTtsEnd (which skips duplicate playback if already streaming).
+    if (eventData.tts_start_streaming && this._streamingTtsUrl && !this._ttsPlaying) {
+      this._log('tts', 'Streaming TTS started — playing early');
+      this._setState(State.TTS);
+      this._playTTS(this._streamingTtsUrl);
+      this._streamingTtsUrl = null;  // consumed
+    }
+
     // HA sends streaming chunks as: { chat_log_delta: { content: " word" } }
     // The first chunk may be { chat_log_delta: { role: "assistant" } } with no content.
     if (!eventData.chat_log_delta) return;
@@ -1171,6 +1193,14 @@ class VoiceSatelliteCard extends HTMLElement {
     if (this._suppressTTS) {
       this._suppressTTS = false;
       this._log('tts', 'TTS suppressed (intent error)');
+      this._restartPipeline(0);
+      return;
+    }
+
+    // If streaming TTS is already playing (started early via tts_start_streaming),
+    // don't start playback again — just restart the pipeline for barge-in.
+    if (this._ttsPlaying) {
+      this._log('tts', 'Streaming TTS already playing — skipping duplicate playback');
       this._restartPipeline(0);
       return;
     }
