@@ -1,5 +1,5 @@
 /**
- * Voice Satellite Card v2.0.0
+ * Voice Satellite Card v2.1.0
  * Transform your browser into a voice satellite for Home Assistant Assist
  * 
  * A custom Lovelace card that enables wake word detection, speech-to-text,
@@ -39,6 +39,7 @@ var DEFAULT_CONFIG = {
   tts_volume: 100,
   tts_target: '',
   continue_conversation: true,
+  double_tap_cancel: true,
   debug: false,
 
   // Microphone Processing
@@ -142,6 +143,8 @@ class VoiceSatelliteCard extends HTMLElement {
     // UI
     this._globalUI = null;
     this._streamedResponse = '';
+    this._lastTapTime = 0;
+    this._doubleTapHandler = null;
 
     // Visibility
     this._visibilityDebounceTimer = null;
@@ -297,6 +300,9 @@ class VoiceSatelliteCard extends HTMLElement {
     ui.querySelector('.vs-start-btn').addEventListener('click', function () {
       self._handleStartClick();
     });
+
+    // Double-tap to cancel: stop TTS and end interaction
+    this._setupDoubleTapHandler();
 
     // Show the start button immediately. It acts as the user gesture fallback.
     // _hideStartButton() will be called if/when the mic starts successfully.
@@ -792,7 +798,7 @@ class VoiceSatelliteCard extends HTMLElement {
         timeout: startStage === 'wake_word' ? 0 : undefined  // Only needed for wake_word stage
       },
       pipeline: pipelineId,
-      timeout: this._config.pipeline_idle_timeout
+      timeout: this._config.pipeline_timeout
     };
 
     // Pass conversation_id for continue conversation
@@ -1730,6 +1736,59 @@ class VoiceSatelliteCard extends HTMLElement {
   }
 
   // --------------------------------------------------------------------------
+  // Double-Tap to Cancel
+  // --------------------------------------------------------------------------
+
+  _setupDoubleTapHandler() {
+    var self = this;
+    this._lastTapTime = 0;
+
+    this._doubleTapHandler = function (e) {
+      // Check if feature is enabled
+      if (!self._config.double_tap_cancel) return;
+
+      // Only act during active interactions
+      var activeStates = [State.WAKE_WORD_DETECTED, State.STT, State.INTENT, State.TTS];
+      if (activeStates.indexOf(self._state) === -1 && !self._ttsPlaying) return;
+
+      var now = Date.now();
+      var timeSinceLastTap = now - self._lastTapTime;
+      self._lastTapTime = now;
+
+      if (timeSinceLastTap < 400 && timeSinceLastTap > 0) {
+        // Double-tap detected — cancel interaction
+        self._log('ui', 'Double-tap detected — cancelling interaction');
+        e.preventDefault();
+
+        // Stop TTS if playing
+        if (self._ttsPlaying) {
+          self._stopTTS();
+        }
+
+        // Clear continue conversation state
+        self._shouldContinue = false;
+        self._continueConversationId = null;
+
+        // Clean up all UI
+        self._chatClear();
+        self._hideBlurOverlay();
+
+        // Play done chime to acknowledge cancellation
+        var isRemote = self._config.tts_target && self._config.tts_target !== 'browser';
+        if (self._config.chime_on_request_sent && !isRemote) {
+          self._playChime('done');
+        }
+
+        // Restart pipeline fresh in wake word mode
+        self._restartPipeline(0);
+      }
+    };
+
+    document.addEventListener('touchstart', this._doubleTapHandler, { passive: false });
+    document.addEventListener('click', this._doubleTapHandler);
+  }
+
+  // --------------------------------------------------------------------------
   // Tab Visibility
   // --------------------------------------------------------------------------
 
@@ -1940,6 +1999,7 @@ class VoiceSatelliteCardEditor extends HTMLElement {
           this._checkboxRow('Start listening on load', 'start_listening_on_load') +
           this._textRow('Wake word switch entity', 'wake_word_switch', 'switch.screensaver') +
           this._checkboxRow('Continue conversation mode', 'continue_conversation') +
+          this._checkboxRow('Double-tap screen to cancel interaction', 'double_tap_cancel') +
           this._checkboxRow('Debug logging', 'debug') +
         '</div>' +
 
@@ -1955,8 +2015,8 @@ class VoiceSatelliteCardEditor extends HTMLElement {
         // --- Timeouts ---
         '<div class="vs-section">' +
           '<div class="vs-section-title">Timeouts</div>' +
-          this._numberRow('Pipeline timeout (s)', 'pipeline_timeout', 0, 300) +
-          this._numberRow('Pipeline idle timeout (s)', 'pipeline_idle_timeout', 0, 3600) +
+          this._numberRow('Server-side pipeline timeout (s)', 'pipeline_timeout', 0, 300) +
+          this._numberRow('Client-side idle restart (s)', 'pipeline_idle_timeout', 0, 3600) +
         '</div>' +
 
         // --- Volume ---
@@ -2147,7 +2207,7 @@ window.customCards.push({
 });
 
 console.info(
-  '%c VOICE-SATELLITE-CARD %c v2.0.0 ',
+  '%c VOICE-SATELLITE-CARD %c v2.1.0 ',
   'color: white; background: #03a9f4; font-weight: bold;',
   'color: #03a9f4; background: white; font-weight: bold;'
 );
