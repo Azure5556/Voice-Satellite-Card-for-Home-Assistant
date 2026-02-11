@@ -131,7 +131,7 @@ transcription_rounded: true        # Rounded corners
 
 # Appearance - Response Bubble (Assistant Speech)
 show_response: true                # Show/hide the response bubble
-streaming_response: false          # Stream text response in real-time
+streaming_response: true          # Stream text response in real-time
 response_font_size: 20             # Font size in pixels
 response_font_family: inherit      # CSS font family
 response_font_color: '#444444'
