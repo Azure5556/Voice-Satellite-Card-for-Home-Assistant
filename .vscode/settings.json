@@ -7,6 +7,9 @@
   "search.exclude": {
     "node_modules": true
   },
+  "workbench.iconTheme": "vscode-icons",
+  "chat.disableAIFeatures": true,
+  "workbench.startupEditor": "none",
   "terminal.integrated.defaultProfile.windows": "Command Prompt",
   "auto-run-command.rules": [
     {
@@ -17,5 +20,10 @@
         "delay": 1000,
         "scope": "folderOpen"
     }
-  ]
+  ],
+  "editor.minimap.enabled": false,
+  "autoHide.autoHideSideBar": false,
+  "autoHide.autoHideAuxiliaryBar": false,
+  "git.enableSmartCommit": true,
+  "git.confirmSync": false
 }
