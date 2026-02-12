@@ -7,5 +7,15 @@
   "search.exclude": {
     "node_modules": true
   },
-  "terminal.integrated.defaultProfile.windows": "Command Prompt"
+  "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  "auto-run-command.rules": [
+    {
+        "command": [
+            "workbench.action.terminal.killAll",
+            "workbench.action.terminal.new"
+        ],
+        "delay": 1000,
+        "scope": "folderOpen"
+    }
+]
 }
