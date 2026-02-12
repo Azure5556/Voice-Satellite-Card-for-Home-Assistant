@@ -5,6 +5,13 @@
       "label": "Build",
       "type": "npm",
       "script": "build",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Development",
+      "type": "npm",
+      "script": "dev",
       "group": {
         "kind": "build",
         "isDefault": true

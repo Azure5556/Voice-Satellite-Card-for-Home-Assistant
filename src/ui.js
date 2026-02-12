@@ -5,7 +5,7 @@
  * start button, and state-driven visual updates.
  */
 
-import { STYLES } from './styles.js';
+import STYLES from './styles.css';
 
 export class UIManager {
   constructor(card) {

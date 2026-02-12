@@ -98,6 +98,93 @@ Each manager receives the card instance via its constructor and accesses other m
 
 The `connection` getter includes a fallback: if `this._connection` is null (e.g. after a tab switch where the `hass` setter hasn't re-fired), it re-grabs the connection from `this._hass.connection` automatically.
 
+### 3.4 Card Lifecycle
+
+**Registration (`index.js`):**
+
+```javascript
+customElements.define('voice-satellite-card', VoiceSatelliteCard);
+customElements.define('voice-satellite-card-editor', VoiceSatelliteCardEditor);
+window.customCards = window.customCards || [];
+window.customCards.push({ type: 'voice-satellite-card', name: 'Voice Satellite Card', ... });
+console.info('%c VOICE-SATELLITE-CARD %c v' + VERSION + ' ', ...);  // styled banner
+```
+
+**Constructor:** Creates all manager instances. Initial state is `IDLE`. The card renders a hidden Shadow DOM element (`<div id="voice-satellite-card" style="display:none;">`).
+
+**`set hass(hass)`:** Called by HA when connection is available. First call only (guarded by `_hasStarted`):
+- Stores `this._connection = hass.connection`
+- Calls `ui.ensureGlobalUI()` to create global overlay
+- If `start_listening_on_load` is true → `_startListening()`
+- Otherwise → `ui.showStartButton()`
+
+**`setConfig(config)`:** Merges user config with `DEFAULT_CONFIG`. Updates logger debug flag. Calls `ui.applyStyles()` if overlay exists. If a different card instance is active (`window._voiceSatelliteInstance`), propagates config to it.
+
+**`connectedCallback()`:** Renders Shadow DOM, ensures global UI, sets up visibility handler. If no instance is active and hass is available, starts listening.
+
+**`disconnectedCallback()`:** Uses 100ms delay to distinguish view switches from real disconnects.
+
+**`_startListening()` sequence:**
+1. Guards against concurrent starts (`window._voiceSatelliteStarting`)
+2. Sets state to CONNECTING
+3. `await audio.startMicrophone()`
+4. `await pipeline.start()`
+5. Sets `window._voiceSatelliteActive = true`, `window._voiceSatelliteInstance = this`
+6. Hides start button, sets up double-tap handler
+7. On failure: shows start button with reason (`not-allowed`, `not-found`, `not-readable`, or `error`)
+
+**`_handleStartClick()`:** Called from start button click. First calls `audio.ensureAudioContextForGesture()` (creates/resumes AudioContext within the user gesture), then `_startListening()`.
+
+### 3.5 Event Routing
+
+`card._handlePipelineMessage(message)` is the central event dispatcher. It first checks guards (`visibility.isPaused`, `pipeline.isRestarting`), then routes by `message.type`:
+
+| Event | Handler |
+|-------|---------|
+| `run-start` | `pipeline.handleRunStart(eventData)` |
+| `wake_word-start` | `pipeline.handleWakeWordStart()` |
+| `wake_word-end` | `pipeline.handleWakeWordEnd(eventData)` |
+| `stt-start` | `card.setState(State.STT)` |
+| `stt-vad-start` | Log only |
+| `stt-vad-end` | Log only |
+| `stt-end` | `pipeline.handleSttEnd(eventData)` |
+| `intent-start` | `card.setState(State.INTENT)` |
+| `intent-progress` | `pipeline.handleIntentProgress(eventData)` (only if `streaming_response` config enabled) |
+| `intent-end` | `pipeline.handleIntentEnd(eventData)` |
+| `tts-start` | `card.setState(State.TTS)` |
+| `tts-end` | `pipeline.handleTtsEnd(eventData)` |
+| `run-end` | `pipeline.handleRunEnd()` |
+| `error` | `pipeline.handleError(errorData)` |
+
+Debug logging includes timestamp (extracted from `message.timestamp`) and truncated JSON of event data (500 chars max).
+
+### 3.6 TTS Complete Callback
+
+`card.onTTSComplete()` handles the end of TTS playback (called by `TtsManager._onComplete()`):
+
+1. **Barge-in check:** If current state is an active interaction (WAKE_WORD_DETECTED, STT, INTENT, TTS), a new interaction has started — skip cleanup entirely.
+2. **Continue conversation:** If `pipeline.shouldContinue` and `pipeline.continueConversationId` are set, keep blur/bar/chat visible, clear `chat.streamEl` (so next turn creates fresh bubble), call `pipeline.restartContinue(conversationId)`.
+3. **Normal completion:** Play done chime (browser only, not remote TTS), call `chat.clear()`, `ui.hideBlurOverlay()`, `ui.updateForState()`.
+
+### 3.7 Response Text Extraction
+
+`pipeline._extractResponseText(eventData)` uses a 4-level fallback chain to handle different HA response formats:
+
+1. `eventData.intent_output.response.speech.plain.speech` (standard format)
+2. `eventData.intent_output.response.speech.speech` (alternative)
+3. `eventData.intent_output.response.plain` (simplified)
+4. `eventData.intent_output.response` if it's a raw string
+
+Returns `null` if none found.
+
+### 3.8 Deferred Run-End
+
+When `run-end` arrives while TTS is still playing, the pipeline sets `_pendingRunEnd = true` and defers cleanup. `finishPendingRunEnd()` is available but currently the run-end is naturally resolved when TTS completes and `onTTSComplete()` handles cleanup. The `_finishRunEnd()` method clears `_pendingRunEnd`, calls `chat.clear()`, `ui.hideBlurOverlay()`, sets state to IDLE, and restarts the pipeline.
+
+### 3.9 UI Pending Start Button
+
+`UIManager` has a `_pendingStartButtonReason` field. If `showStartButton()` is called before the global UI overlay exists (possible during early `hass` setter), the reason is stored. `_flushPendingStartButton()` is called by `ensureGlobalUI()` to show the button once the overlay is created. The start button is shown by default (with `.visible` class) when the global UI is first created.
+
 ---
 
 ## 4. State Machine
@@ -143,6 +230,19 @@ All UI elements are inside a single `<div id="voice-satellite-ui">` appended to 
 
 Only one instance of this overlay ever exists (singleton pattern). The active card instance is tracked via `window._voiceSatelliteInstance`.
 
+CSS styles are injected once into `<head>` as a `<style id="voice-satellite-styles">` element. All selectors are prefixed with `#voice-satellite-ui` to avoid conflicts.
+
+**Z-index layers:**
+
+| Element | z-index | Notes |
+|---------|---------|-------|
+| `.vs-blur-overlay` | 9999 | Behind everything else |
+| `.vs-rainbow-bar` | 10000 | Above blur |
+| `.vs-start-btn` | 10001 | Above bar |
+| `.vs-chat-container` | 10001 | Same as button (never shown simultaneously) |
+
+**Start button SVG:** A 24×24 viewBox microphone icon path: `M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z`
+
 ### 5.2 Pointer Events — Critical
 
 All overlay elements use `opacity: 0` when hidden but remain in the DOM as fixed-position elements with high `z-index`. Without `pointer-events: none`, these invisible elements block all mouse and touch events on the entire HA dashboard. Every hidden overlay element MUST have `pointer-events: none`, switching to `pointer-events: auto` only when the `.visible` class is added.
@@ -172,6 +272,12 @@ The container is a flex column positioned at the bottom of the screen above the 
 - `hideResponse()` → no-op (messages persist until `clear()`)
 
 **Streaming text fade:** During streaming, `chat.updateResponse()` applies a trailing character fade to give the appearance of text flowing in smoothly. The last 24 characters (`FADE_LEN`) are each wrapped in a `<span>` with decreasing opacity — the character right after the solid text is at full opacity, and the very last character fades to near-transparent. As new chunks arrive and the text grows, the fade window slides forward. When `pipeline.handleIntentEnd()` fires with the final complete text, `chat.showResponse()` sets `textContent` directly (no spans, no fade), making all text crisp and clean. For short texts (≤ `FADE_LEN` characters), no fade is applied.
+
+**Intent-end cleanup:** `pipeline.handleIntentEnd()` always resets `chat.streamedResponse = ''` and `chat.streamEl = null` after processing. This prevents stale streaming state from leaking into the next interaction or continue-conversation turn.
+
+**Chat container positioning:** `ui.applyStyles()` positions the chat container above the gradient bar with a 12px gap. When `bar_position` is `'bottom'`, the container's CSS `bottom` is set to `barHeight + 12` pixels. When `bar_position` is `'top'`, the container sits at `bottom: 12px` (bar is at top, so no offset needed). The container always uses `bottom` positioning (never `top`) and content grows upward.
+
+**Message styling:** Each message `<div class="vs-chat-msg">` gets inline styles from config: `fontSize`, `fontFamily`, `color`, `fontWeight` (bold → `'bold'`), `fontStyle` (italic → `'italic'`), `background`, `border` (3px solid + border color), `padding`, `borderRadius` (rounded → `'12px'`, else `'0'`). User messages use `transcription_*` config keys, assistant messages use `response_*` keys. Messages have a fade-in animation (`vs-chat-fade-in`: opacity 0→1, translateY 8px→0 over 0.3s) and a box shadow (`0 4px 12px rgba(0,0,0,0.15)`).
 
 **Single-turn behavior:** One user message + one assistant message appear during the interaction, then `chat.clear()` removes everything when the conversation ends.
 
@@ -207,7 +313,7 @@ For intent-specific errors (LLM service down), a separate `pipeline._intentError
 
 ### 6.3 TTS Bar Persistence
 
-When TTS starts playing, the pipeline is immediately restarted for barge-in. This causes the state to transition to LISTENING, which normally hides the bar. The `ui.updateForState()` method has a special check: if `this._ttsPlaying` is true, the bar remains visible regardless of state. Once TTS finishes, `card.onTTSComplete()` calls `ui.updateForState()` which then hides the bar normally.
+When TTS starts playing, the pipeline is immediately restarted for barge-in. This causes the state to transition to LISTENING, which normally hides the bar. The `ui.updateForState(state, serviceUnavailable, ttsPlaying)` method receives `ttsPlaying` as a parameter: if true, it refuses to hide the bar regardless of state. `card.onTTSComplete()` calls `ui.updateForState()` with `ttsPlaying: false`, allowing the bar to hide normally.
 
 ### 6.4 CSS Animations
 
@@ -628,7 +734,7 @@ Three global flags prevent this:
 
 ### Response Bubble
 
-`show_response`, `streaming_response` (false), `response_font_size` (20), `response_font_family` ('inherit'), `response_font_color` ('#444444'), `response_font_bold` (true), `response_font_italic` (false), `response_background` ('#ffffff'), `response_border_color` ('rgba(100, 200, 150, 0.5)'), `response_padding` (16), `response_rounded` (true).
+`show_response`, `streaming_response` (true), `response_font_size` (20), `response_font_family` ('inherit'), `response_font_color` ('#444444'), `response_font_bold` (true), `response_font_italic` (false), `response_background` ('#ffffff'), `response_border_color` ('rgba(100, 200, 150, 0.5)'), `response_padding` (16), `response_rounded` (true).
 
 ---
 
@@ -659,7 +765,7 @@ After starting TTS, `pipeline.restart(0)` is called immediately. The new pipelin
 
 When the TTS engine supports streaming (e.g. streaming Piper, OpenAI TTS), HA can start generating audio before the LLM finishes its full response. The card detects and leverages this for faster time-to-audio:
 
-1. **`run-start`** provides the TTS URL upfront with `stream_response: true` in `tts_output`. The card stores it as `tts.streamingUrl`.
+1. **`run-start`** provides the TTS URL upfront with `stream_response: true` in `tts_output`. The card calls `tts.storeStreamingUrl(eventData)` which reads `eventData.tts_output.url` (note: `.url` not `.url_path` for streaming) and prefixes with `window.location.origin` if relative. The URL is stored as `tts.streamingUrl`. The streaming URL is also reset to null on every `run-start` to prevent stale URLs from previous runs.
 2. **`intent-progress`** chunks stream in — text appears in the response bubble as normal.
 3. **`intent-progress` with `tts_start_streaming: true`** — HA signals TTS has started generating audio from partial text. The card immediately calls `tts.play(tts.streamingUrl)`, sets state to TTS, and nulls the stored URL (consumed). The browser `Audio` element handles chunked/progressive playback naturally.
 4. **More `intent-progress` chunks** continue arriving — text keeps streaming into the bubble while audio is already playing.
@@ -690,7 +796,7 @@ this._card.hass.callService('media_player', 'play_media', {
 - **`tts_volume` does not apply.** The browser volume slider only controls the local `Audio` element. Remote player volume is controlled via the media player's own volume settings.
 - **Barge-in calls `media_player.media_stop`.** When the user says the wake word during remote TTS, `tts.stop()` sends a stop command to the media player and clears the UI timer.
 
-### 15.6 The `tts.isPlaying` Flag
+### 15.5 The `tts.isPlaying` Flag
 
 A boolean `tts.isPlaying` flag tracks whether TTS is active, regardless of playback target. It replaces direct `tts._currentAudio` checks for all state logic:
 
@@ -701,15 +807,19 @@ A boolean `tts.isPlaying` flag tracks whether TTS is active, regardless of playb
 
 `tts._currentAudio` is only used internally for browser `Audio` element management. `tts._endTimer` is only used for remote playback's 2-second UI cleanup delay.
 
-### 15.7 Cleanup
+**`tts.stop()` behavior:** Sets `_playing = false`. Clears `_endTimer`. For browser audio: nulls `onended`/`onerror` handlers (prevents ghost callbacks), pauses, sets `src = ''`, nulls `_currentAudio`. For remote playback: calls `media_player.media_stop` on the target entity. Both paths are executed — the method handles all cleanup regardless of which playback method was active.
 
-`card.onTTSComplete()` clears both `tts._currentAudio` and `tts.isPlaying`, cancels `tts._endTimer` if pending, then checks if a new interaction is already in progress (barge-in). If so, it does nothing — the UI belongs to the new interaction.
+### 15.6 Cleanup
+
+`TtsManager._onComplete()` clears `tts._currentAudio`, sets `tts._playing` to false, cancels `tts._endTimer` if pending, then calls `card.onTTSComplete()`.
+
+`card.onTTSComplete()` then checks if a new interaction is already in progress (barge-in — current state is WAKE_WORD_DETECTED, STT, INTENT, or TTS). If so, it returns — the UI belongs to the new interaction.
 
 Next, it checks if continue conversation mode is active (`pipeline.shouldContinue` and `pipeline.continueConversationId` set by `pipeline.handleIntentEnd()`). If so, it keeps the chat container and blur overlay visible, clears `chat.streamEl` so the next turn creates a fresh assistant bubble, and calls `pipeline.restartContinue(conversationId)` to start a new pipeline with `start_stage: 'stt'` and the stored `conversation_id`.
 
 Otherwise (normal completion), it plays the done chime (browser only), calls `chat.clear()` to remove all chat messages, hides the blur overlay, and calls `ui.updateForState()`.
 
-### 15.8 Chimes Stay Local
+### 15.7 Chimes Stay Local
 
 Chimes (wake, done, error) always play on the browser via the Web Audio API oscillator, regardless of `tts_target`. They are not routed to remote media players.
 

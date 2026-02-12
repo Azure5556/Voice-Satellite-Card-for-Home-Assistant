@@ -1,10 +1,11 @@
 {
   "name": "voice-satellite-card",
-  "version": "2.5.0",
-  "description": "Transform your browser into a voice satellite for Home Assistant Assist",
+  "version": "2.6.0",
+  "description": "Transform your browser into a voice satellite for Home Assistant.",
   "private": true,
   "scripts": {
-    "build": "webpack --mode production"   
+    "build": "webpack --mode production",
+    "dev": "webpack --mode production && copy voice-satellite-card.js \\\\hassio\\config\\www\\voice-satellite-card.js && copy voice-satellite-card.js.map \\\\hassio\\config\\www\\voice-satellite-card.js.map"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",

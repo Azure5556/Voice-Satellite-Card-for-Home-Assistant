@@ -13,6 +13,10 @@ const baseConfig = {
           loader: 'babel-loader',
         },
       },
+      {
+        test: /\.css$/,
+        type: 'asset/source',
+      },
     ],
   },
   plugins: [
