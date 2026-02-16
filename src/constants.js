@@ -79,3 +79,15 @@ export const EXPECTED_ERRORS = [
   'stt-no-text-recognized',
   'duplicate_wake_up_detected',
 ];
+
+/**
+ * Build a seamless looping gradient by appending the first color
+ * at the end so the animation wraps without a hard edge.
+ */
+export function seamlessGradient(colorList) {
+  var colors = colorList.split(',').map(function (c) { return c.trim(); });
+  if (colors.length > 1 && colors[0] !== colors[colors.length - 1]) {
+    colors.push(colors[0]);
+  }
+  return 'linear-gradient(90deg, ' + colors.join(', ') + ')';
+}

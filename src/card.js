@@ -15,6 +15,7 @@ import { ChatManager } from './chat.js';
 import { DoubleTapHandler } from './double-tap.js';
 import { VisibilityManager } from './visibility.js';
 import { getConfigForm } from './editor.js';
+import { isEditorPreview, renderPreview } from './preview.js';
 
 export class VoiceSatelliteCard extends HTMLElement {
   constructor() {
@@ -67,12 +68,21 @@ export class VoiceSatelliteCard extends HTMLElement {
       this._disconnectTimeout = null;
     }
     this._render();
-    this._ui.ensureGlobalUI();
-    this._visibility.setup();
 
-    if (!window._voiceSatelliteActive && this._hass && this._hass.connection) {
-      this._startListening();
-    }
+    // Defer preview check — card may not be in final DOM tree yet
+    var self = this;
+    requestAnimationFrame(function () {
+      if (isEditorPreview(self) && self.shadowRoot) {
+        renderPreview(self.shadowRoot, self._config);
+        return; // Don't start pipeline in preview mode
+      }
+      self._ui.ensureGlobalUI();
+      self._visibility.setup();
+
+      if (!window._voiceSatelliteActive && self._hass && self._hass.connection) {
+        self._startListening();
+      }
+    });
   }
 
   disconnectedCallback() {
@@ -90,6 +100,11 @@ export class VoiceSatelliteCard extends HTMLElement {
 
     if (this._ui.element) {
       this._ui.applyStyles();
+    }
+
+    // Re-render preview if in editor
+    if (this.shadowRoot && isEditorPreview(this)) {
+      renderPreview(this.shadowRoot, this._config);
     }
 
     // Propagate config to active instance if this is a secondary card
@@ -229,7 +244,15 @@ export class VoiceSatelliteCard extends HTMLElement {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: 'open' });
     }
-    this.shadowRoot.innerHTML = '<div id="voice-satellite-card" style="display:none;"></div>';
+
+    // Detect if we're inside the card editor preview
+    var isPreview = isEditorPreview(this);
+
+    if (isPreview) {
+      renderPreview(this.shadowRoot, this._config);
+    } else {
+      this.shadowRoot.innerHTML = '<div id="voice-satellite-card" style="display:none;"></div>';
+    }
   }
 
   async _startListening() {

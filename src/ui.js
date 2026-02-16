@@ -6,6 +6,7 @@
  */
 
 import STYLES from './styles.css';
+import { seamlessGradient } from './constants.js';
 
 export class UIManager {
   constructor(card) {
@@ -71,7 +72,7 @@ export class UIManager {
     bar.style.height = cfg.bar_height + 'px';
     bar.style[cfg.bar_position === 'top' ? 'top' : 'bottom'] = '0';
     bar.style[cfg.bar_position === 'top' ? 'bottom' : 'top'] = 'auto';
-    bar.style.background = 'linear-gradient(90deg, ' + cfg.bar_gradient + ')';
+    bar.style.background = seamlessGradient(cfg.bar_gradient);
     bar.style.backgroundSize = '200% 100%';
 
     var blur = this._globalUI.querySelector('.vs-blur-overlay');
@@ -190,7 +191,7 @@ export class UIManager {
     if (!this._globalUI) return;
     var bar = this._globalUI.querySelector('.vs-rainbow-bar');
     bar.classList.remove('error-mode');
-    bar.style.background = 'linear-gradient(90deg, ' + this._card.config.bar_gradient + ')';
+    bar.style.background = seamlessGradient(this._card.config.bar_gradient);
     bar.style.backgroundSize = '200% 100%';
   }
 

@@ -1,0 +1,145 @@
+/**
+ * Voice Satellite Card — Editor Preview
+ *
+ * Renders a self-contained preview inside the shadow DOM when the card
+ * is displayed in the HA card editor. Shows the activity bar, blur overlay,
+ * and sample transcription/response bubbles with current config styling.
+ */
+
+import { seamlessGradient } from './constants.js';
+
+/**
+ * Walk up the DOM/shadow DOM tree to detect if the card is inside
+ * the HA card editor preview pane.
+ */
+export function isEditorPreview(element) {
+  var el = element;
+  var depth = 0;
+  while (el && depth < 30) {
+    var tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'hui-card-preview' ||
+        tag === 'hui-card-edit-mode' ||
+        tag === 'hui-dialog-edit-card' ||
+        tag === 'dialog-edit-card') {
+      return true;
+    }
+    if (el.parentElement) {
+      el = el.parentElement;
+    } else if (el.getRootNode && el.getRootNode() !== el) {
+      el = el.getRootNode().host;
+    } else {
+      break;
+    }
+    depth++;
+  }
+  return false;
+}
+
+/**
+ * Render a live preview into the given shadow root using current config.
+ */
+export function renderPreview(shadowRoot, config) {
+  var cfg = config;
+
+  var barGradient = seamlessGradient(cfg.bar_gradient);
+  var barPos = cfg.bar_position === 'top' ? 'top: 0;' : 'bottom: 0;';
+  var blurStyle = cfg.background_blur
+    ? 'backdrop-filter: blur(' + cfg.background_blur_intensity + 'px); -webkit-backdrop-filter: blur(' + cfg.background_blur_intensity + 'px); background: rgba(0,0,0,0.3);'
+    : '';
+
+  var transcriptionHtml = '';
+  if (cfg.show_transcription) {
+    transcriptionHtml =
+      '<div class="preview-bubble transcription" style="' +
+      'font-size:' + cfg.transcription_font_size + 'px;' +
+      'font-family:' + cfg.transcription_font_family + ';' +
+      'color:' + cfg.transcription_font_color + ';' +
+      'font-weight:' + (cfg.transcription_font_bold ? 'bold' : 'normal') + ';' +
+      'font-style:' + (cfg.transcription_font_italic ? 'italic' : 'normal') + ';' +
+      'background:' + cfg.transcription_background + ';' +
+      'border: 2px solid ' + cfg.transcription_border_color + ';' +
+      'padding:' + cfg.transcription_padding + 'px;' +
+      (cfg.transcription_rounded ? 'border-radius: 12px;' : '') +
+      '">What\'s the weather like?</div>';
+  }
+
+  var responseHtml = '';
+  if (cfg.show_response) {
+    responseHtml =
+      '<div class="preview-bubble response" style="' +
+      'font-size:' + cfg.response_font_size + 'px;' +
+      'font-family:' + cfg.response_font_family + ';' +
+      'color:' + cfg.response_font_color + ';' +
+      'font-weight:' + (cfg.response_font_bold ? 'bold' : 'normal') + ';' +
+      'font-style:' + (cfg.response_font_italic ? 'italic' : 'normal') + ';' +
+      'background:' + cfg.response_background + ';' +
+      'border: 2px solid ' + cfg.response_border_color + ';' +
+      'padding:' + cfg.response_padding + 'px;' +
+      (cfg.response_rounded ? 'border-radius: 12px;' : '') +
+      '">It\'s 72°F and sunny.</div>';
+  }
+
+  shadowRoot.innerHTML =
+    '<style>' +
+    ':host { display: block; }' +
+    '.preview-container {' +
+    '  position: relative;' +
+    '  width: 100%;' +
+    '  height: 180px;' +
+    '  overflow: hidden;' +
+    '  border-radius: var(--ha-card-border-radius, 12px);' +
+    '  background: var(--card-background-color, #1c1c1c);' +
+    '}' +
+    '.preview-bg {' +
+    '  position: absolute;' +
+    '  top: 0; left: 0; right: 0; bottom: 0;' +
+    '  background-image:' +
+    '    radial-gradient(circle at 20% 40%, var(--primary-color, #03a9f4) 0%, transparent 50%),' +
+    '    radial-gradient(circle at 75% 30%, var(--accent-color, #ff9800) 0%, transparent 40%),' +
+    '    radial-gradient(circle at 50% 80%, var(--info-color, #4fc3f7) 0%, transparent 45%);' +
+    '  opacity: 0.5;' +
+    '}' +
+    '.preview-blur {' +
+    '  position: absolute;' +
+    '  top: 0; left: 0; right: 0; bottom: 0;' +
+    '  ' + blurStyle +
+    '}' +
+    '.preview-bar {' +
+    '  position: absolute;' +
+    '  left: 0; right: 0;' +
+    '  ' + barPos +
+    '  height: ' + cfg.bar_height + 'px;' +
+    '  background: ' + barGradient + ';' +
+    '  background-size: 200% 100%;' +
+    '  animation: preview-flow 3s linear infinite;' +
+    '}' +
+    '.preview-bubbles {' +
+    '  position: absolute;' +
+    '  left: 50%; top: 50%;' +
+    '  transform: translate(-50%, -50%);' +
+    '  display: flex;' +
+    '  flex-direction: column;' +
+    '  align-items: center;' +
+    '  gap: 8px;' +
+    '  width: 85%;' +
+    '}' +
+    '.preview-bubble {' +
+    '  max-width: 90%;' +
+    '  text-align: center;' +
+    '  box-shadow: 0 4px 12px rgba(0,0,0,0.15);' +
+    '}' +
+    '@keyframes preview-flow {' +
+    '  0% { background-position: 0% 50%; }' +
+    '  100% { background-position: 200% 50%; }' +
+    '}' +
+    '</style>' +
+    '<div class="preview-container">' +
+    '<div class="preview-bg"></div>' +
+    '<div class="preview-blur"></div>' +
+    '<div class="preview-bubbles">' +
+    transcriptionHtml +
+    responseHtml +
+    '</div>' +
+    '<div class="preview-bar"></div>' +
+    '</div>';
+}

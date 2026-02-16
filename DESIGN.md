@@ -39,7 +39,7 @@ voice-satellite-card/
 ├── src/                              ← ES6 source modules
 │   ├── index.js                      ← Entry point, custom element registration
 │   ├── card.js                       ← VoiceSatelliteCard (thin orchestrator)
-│   ├── constants.js                  ← State enum, DEFAULT_CONFIG (incl. state_entity), VERSION
+│   ├── constants.js                  ← State enum, DEFAULT_CONFIG, VERSION, seamlessGradient()
 │   ├── logger.js                     ← Shared Logger class
 │   ├── audio.js                      ← AudioManager (mic, worklet, resample, send)
 │   ├── tts.js                        ← TtsManager (playback, chimes, streaming TTS)
@@ -49,6 +49,7 @@ voice-satellite-card/
 │   ├── styles.css                    ← CSS styles (imported as raw string via webpack)
 │   ├── double-tap.js                 ← DoubleTapHandler (cancel with touch dedup)
 │   ├── visibility.js                 ← VisibilityManager (tab pause/resume)
+│   ├── preview.js                    ← Editor preview (isEditorPreview, renderPreview)
 │   └── editor.js                     ← getConfigForm() schema (native HA selectors)
 ├── voice-satellite-card.min.js       ← Built output (minified, committed)
 ├── voice-satellite-card.js           ← Built output (readable, gitignored)
@@ -979,6 +980,10 @@ Categories: `state`, `lifecycle`, `mic`, `pipeline`, `event`, `error`, `recovery
 ## 20. Visual Editor
 
 The card uses Home Assistant's built-in form editor via the `getConfigForm()` static method (defined in `src/editor.js`). Instead of a custom HTML editor element, the card returns a schema object that HA renders using native selectors — entity pickers, boolean toggles, number sliders, select dropdowns, and text inputs. The Behavior fields (pipeline, entity pickers, toggles) are always visible at the top level. The remaining settings are organized into expandable sections: Volume & Chimes, Microphone Processing, Timeouts, Activity Bar, Transcription Bubble, and Response Bubble. Entity fields use the native `entity` selector with domain filters (e.g., `input_text` for state_entity, `switch`/`input_boolean` for wake_word_switch, `media_player` for tts_target). The pipeline picker uses the native `assist_pipeline` selector. Labels and helper text are provided via `computeLabel` and `computeHelper` callbacks. No custom element registration is needed — HA handles all rendering, validation, and config-changed events automatically.
+
+### 20.1 Editor Preview
+
+Since the card is normally invisible (`getCardSize() = 0`), the editor preview pane would be blank. To provide visual feedback, the card detects when it is rendered inside HA's editor preview (via `isEditorPreview()` in `src/preview.js`, which walks up the DOM/shadow DOM tree looking for `hui-card-preview` or related wrapper elements). When detected, `renderPreview()` renders a self-contained preview inside the shadow DOM showing the activity bar (with flowing animation), blur overlay, a colorful background, and sample transcription/response bubbles styled with the current config. The preview updates live as the user changes settings — `setConfig()` re-renders the preview on every config change, and `connectedCallback()` defers the check via `requestAnimationFrame` to ensure the card is in its final DOM position.
 
 ---
 

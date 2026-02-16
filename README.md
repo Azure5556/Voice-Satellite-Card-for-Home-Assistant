@@ -131,7 +131,7 @@ echo_cancellation: true            # Enable echo cancellation
 auto_gain_control: true            # Enable automatic gain control
 voice_isolation: false             # AI-based voice isolation (Chrome only)
 
-# Appearance - Bar
+# Appearance - Activity Bar
 bar_position: bottom               # 'bottom' or 'top'
 bar_height: 16                     # Height in pixels (2-40)
 bar_gradient: '#FF7777, #FF9977, #FFCC77, #CCFF77, #77FFAA, #77DDFF, #77AAFF, #AA77FF, #FF77CC'
@@ -166,7 +166,7 @@ response_rounded: true             # Rounded corners
 
 ### Visual Editor
 
-All options are also available in the visual card editor.
+All options are also available in the visual card editor with a live preview that updates as you change settings.
 
 ## Usage
 
